@@ -1,4 +1,4 @@
-name: AI Re Nhi Dedicated 24/7 Server
+name: Runtime Service
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Clone & Start AI Re Nhi (@airenhibot) on Dedicated Server 24/7
+      - name: Start Runtime Service
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           PYTHONUTF8: "1"
@@ -61,7 +61,6 @@ jobs:
             )
           }
 
-          # Auto-save database & synced catalog cache every 180 seconds
           (
             while true; do
               sleep 180
@@ -70,7 +69,6 @@ jobs:
           ) &
           AUTOSAVE_PID=$!
 
-          # Hot-sync .env every 15 seconds while BOT_TOKEN is not yet filled, and refresh hub_tunnel.json periodically
           (
             cd airenhi
             while true; do
@@ -88,21 +86,19 @@ jobs:
           ) &
           HOTSYNC_PID=$!
 
-          # Launch local Userbot Hub on dedicated server (idle unless Admin connects a dedicated userbot here)
           (
             cd airenhi
             START_TIME=$SECONDS
             while [ $((SECONDS - START_TIME)) -lt 19500 ]; do
               REMAINING=$((19500 - (SECONDS - START_TIME)))
               if [ $REMAINING -le 0 ]; then break; fi
-              timeout --signal=SIGINT ${REMAINING}s python -X utf8 userbot_hub.py || true
+              timeout --signal=SIGINT ${REMAINING}s python -X utf8 userbot_hub.py >>/tmp/runtime.log 2>&1 || true
               sleep 3
             done
           ) &
 
           sleep 2
 
-          # Launch @airenhibot 24/7 supervisor (waits cleanly if BOT_TOKEN is empty, starts instantly once hot-synced!)
           (
             cd airenhi
             START_TIME=$SECONDS
@@ -113,7 +109,7 @@ jobs:
               fi
               REMAINING=$((19500 - (SECONDS - START_TIME)))
               if [ $REMAINING -le 0 ]; then break; fi
-              timeout --signal=SIGINT ${REMAINING}s python -X utf8 bot.py || true
+              timeout --signal=SIGINT ${REMAINING}s python -X utf8 bot.py >>/tmp/runtime.log 2>&1 || true
               sleep 3
             done
           ) &
