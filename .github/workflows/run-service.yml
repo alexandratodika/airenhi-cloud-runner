@@ -12,11 +12,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: airenhi-dedicated-24-7-single-instance
+  group: ${{ vars.RUNTIME_LOCK }}
   cancel-in-progress: false
 
 jobs:
-  run-airenhi-bot:
+  run-worker-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -36,21 +36,22 @@ jobs:
       - name: Start Runtime Service
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          RUNTIME_SOURCES: ${{ secrets.RUNTIME_SOURCES }}
           PYTHONUTF8: "1"
           QUIET_STARTUP: "1"
         run: |
-          git config --global user.name "Airenhi AutoSave"
-          git config --global user.email "airenhi@users.noreply.github.com"
+          git config --global user.name "Runtime Sync"
+          git config --global user.email "runtime@users.noreply.github.com"
+          python "$GITHUB_WORKSPACE/checkout_sources.py" worker
 
-          git clone https://x-access-token:${PAT_TOKEN}@github.com/alexandratodika/airenhi-tele-shop-bot.git airenhi
           pip install --upgrade pip
-          pip install -r airenhi/requirements.txt
+          pip install -r worker/requirements.txt
 
-          cp -a "airenhi" "$RUNNER_TEMP/airenhi_state_sync"
+          cp -a "worker" "$RUNNER_TEMP/worker_state_sync"
 
-          save_airenhi_state() {
+          save_worker_state() {
             local failed=0
-            for d in airenhi; do
+            for d in worker; do
               if ! python "$GITHUB_WORKSPACE/runtime_state.py" "$d" "$RUNNER_TEMP/${d}_state_sync" 'shop_data.db' 'canboso_cache.json' 'roboticvn_cache.json' 'thomap_userbot.session' 'auto_ads_config.json' 'ads_userbot.session' 'auto_ads_media.*'; then
                 failed=1
               fi
@@ -61,7 +62,7 @@ jobs:
           (
             while true; do
               sleep 180
-              if ! save_airenhi_state; then
+              if ! save_worker_state; then
                 echo "::warning::Periodic state save failed; next cycle will retry."
               fi
             done
@@ -69,7 +70,7 @@ jobs:
           AUTOSAVE_PID=$!
 
           (
-            cd airenhi
+            cd worker
             while true; do
               git fetch origin main 2>/dev/null || true
               if ! grep -qE '^BOT_TOKEN=.+$' .env 2>/dev/null; then
@@ -86,7 +87,7 @@ jobs:
           HOTSYNC_PID=$!
 
           (
-            cd airenhi
+            cd worker
             START_TIME=$SECONDS
             while [ $((SECONDS - START_TIME)) -lt 19500 ]; do
               REMAINING=$((19500 - (SECONDS - START_TIME)))
@@ -99,7 +100,7 @@ jobs:
           sleep 2
 
           (
-            cd airenhi
+            cd worker
             START_TIME=$SECONDS
             while [ $((SECONDS - START_TIME)) -lt 19500 ]; do
               if ! grep -qE '^BOT_TOKEN=.+$' .env 2>/dev/null; then
@@ -118,14 +119,14 @@ jobs:
           kill "$AUTOSAVE_PID" "$HOTSYNC_PID" 2>/dev/null || true
           wait "$AUTOSAVE_PID" 2>/dev/null || true
 
-          if ! save_airenhi_state; then
+          if ! save_worker_state; then
             echo "::warning::End-of-run state save failed; finalizer will retry."
           fi
 
-          curl -s -X POST \
+          curl --fail --silent --show-error --location --max-time 30 -X POST \
             -H "Authorization: token ${PAT_TOKEN}" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/alexandratodika/airenhi-cloud-runner/actions/workflows/run-airenhi-24-7.yml/dispatches \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/run-service.yml/dispatches" \
             -d '{"ref":"main"}' || true
 
       - name: Save validated state on exit or cancel
@@ -134,7 +135,7 @@ jobs:
           pkill -INT -f "python -X utf8" 2>/dev/null || true
           sleep 3
           failed=0
-          for d in airenhi; do
+          for d in worker; do
             if [ -d "$d/.git" ]; then
               if [ ! -d "$RUNNER_TEMP/${d}_state_sync/.git" ]; then
                 echo "::error::Independent state checkout is missing."
